@@ -1,73 +1,85 @@
 package com.example.qrcodescanner
 
-import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
-import android.util.Patterns
+import android.view.View
 import android.widget.ImageView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.app.ActivityCompat
-import androidx.core.content.ContextCompat
+import androidx.lifecycle.ViewModelProvider
 import com.budiyev.android.codescanner.AutoFocusMode
 import com.budiyev.android.codescanner.CodeScanner
 import com.budiyev.android.codescanner.DecodeCallback
 import com.budiyev.android.codescanner.ErrorCallback
 import com.budiyev.android.codescanner.ScanMode
-import kotlinx.android.synthetic.main.activity_main.*
+import com.example.qrcodescanner.databinding.ActivityMainBinding
 
-class MainActivity : AppCompatActivity() {
+class MainActivity : AppCompatActivity(), View.OnClickListener {
+
+    private lateinit var binding: ActivityMainBinding
+    private lateinit var viewModel: MainViewModel
 
     private lateinit var codeScanner: CodeScanner
-    private val CAMERA_PERMISSION_CODE = 1111
+    private lateinit var reverseCameraImage: ImageView
+    private lateinit var cancelTextView: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_main)
+
+        binding = ActivityMainBinding.inflate(layoutInflater)
+        val view = binding.root
+        setContentView(view)
+
+        reverseCameraImage = binding.reverseCameraImageView
+        cancelTextView = binding.cancelTextView
+
+        val factory = MainViewModelFactory()
+        viewModel = ViewModelProvider(this, factory).get(MainViewModel::class.java)
 
         initCodeScanner()
 
-        codeScanner.decodeCallback = DecodeCallback {
+        codeScanner.decodeCallback = DecodeCallback { result ->
             runOnUiThread {
+                viewModel.updateUrl(result.text)
                 Toast.makeText(
                     this,
-                    "Scan result: ${it.text}", Toast.LENGTH_LONG
+                    "Scan result: ${result.text}", Toast.LENGTH_LONG
                 ).show()
-                openUrlInBrowser(it.text)
+                openUrlInBrowser()
             }
         }
 
-        codeScanner.errorCallback = ErrorCallback {
+        codeScanner.errorCallback = ErrorCallback { exception ->
             runOnUiThread {
                 Toast.makeText(
                     this,
-                    "Camera error: ${it.message}", Toast.LENGTH_LONG
+                    "Camera error: ${exception.message}", Toast.LENGTH_LONG
                 ).show()
             }
         }
+
+        reverseCameraImage.setOnClickListener(this)
+        cancelTextView.setOnClickListener(this)
 
         checkCameraPermission()
+    }
 
-        val reverseCameraImage: ImageView = reverseCameraImageView
-        reverseCameraImage.setOnClickListener {
-            reverseCamera()
-            Toast.makeText(
-                this,
-                "Reverse camera", Toast.LENGTH_LONG
-            ).show()
-        }
-
-        val cancelTextView: TextView = cancelTextView
-        cancelTextView.setOnClickListener {
-            codeScanner.startPreview()
+    override fun onClick(view: View?) {
+        when (view?.id) {
+            reverseCameraImage.id -> {
+                reverseCamera()
+            }
+            cancelTextView.id -> {
+                codeScanner.startPreview()
+            }
         }
     }
 
-    fun initCodeScanner(){
-        codeScanner = CodeScanner(this, scannerView)
+    private fun initCodeScanner() {
+        codeScanner = CodeScanner(this, binding.scannerView)
         codeScanner.camera = CodeScanner.CAMERA_BACK
         codeScanner.formats = CodeScanner.ALL_FORMATS
         codeScanner.autoFocusMode = AutoFocusMode.SAFE
@@ -76,38 +88,25 @@ class MainActivity : AppCompatActivity() {
         codeScanner.isFlashEnabled = false
     }
 
-    fun reverseCamera() {
+    private fun reverseCamera() {
         if (codeScanner.camera == CodeScanner.CAMERA_BACK)
             codeScanner.camera = CodeScanner.CAMERA_FRONT
         else codeScanner.camera = CodeScanner.CAMERA_BACK
     }
 
-    fun checkCameraPermission() {
-        if (ContextCompat.checkSelfPermission(
-                this,
-                Manifest.permission.CAMERA
-            ) != PackageManager.PERMISSION_GRANTED
-        ) {
-            ActivityCompat.requestPermissions(
-                this,
-                arrayOf(Manifest.permission.CAMERA), CAMERA_PERMISSION_CODE
-            )
-        } else {
+    private fun checkCameraPermission() {
+        if (this.checkPermission(CAMERA_PERMISSION))
             codeScanner.startPreview()
-        }
-    }
-    private fun isValidUrl(url: String): Boolean {
-        return Patterns.WEB_URL.matcher(url).matches()
     }
 
-    fun openUrlInBrowser(url: String) {
-        if (isValidUrl(url)) {
-            val browserIntent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+    private fun openUrlInBrowser() {
+        if (viewModel.isValidUrl()) {
+            val browserIntent = Intent(Intent.ACTION_VIEW, Uri.parse(viewModel.getUrl()))
             if (browserIntent.resolveActivity(packageManager) != null)
                 startActivity(browserIntent)
             else Toast.makeText(
                 this,
-                "Please, install a browser", Toast.LENGTH_LONG
+                "No app found to open the link", Toast.LENGTH_LONG
             ).show()
         } else Toast.makeText(
             this,
@@ -121,16 +120,9 @@ class MainActivity : AppCompatActivity() {
         grantResults: IntArray
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == CAMERA_PERMISSION_CODE && grantResults.isNotEmpty() &&
+        if (requestCode == REQUEST_CODE && grantResults.isNotEmpty() &&
             grantResults[0] == PackageManager.PERMISSION_GRANTED
-        ) {
-            codeScanner.startPreview()
-        } else {
-            Toast.makeText(
-                this,
-                "Can not scan until you give the camera permission", Toast.LENGTH_LONG
-            ).show()
-        }
+        ) codeScanner.startPreview()
     }
 
     override fun onResume() {
@@ -141,5 +133,10 @@ class MainActivity : AppCompatActivity() {
     override fun onPause() {
         codeScanner.releaseResources()
         super.onPause()
+    }
+
+    override fun onDestroy() {
+        codeScanner.stopPreview()
+        super.onDestroy()
     }
 }
